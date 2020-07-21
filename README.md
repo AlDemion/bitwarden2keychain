@@ -9,7 +9,7 @@ curl -L -o bitwarden2keychain https://github.com/aldemion/bitwarden2keychain/rel
 chmod +x bitwarden2keychain
 ```
 
-If you want to use this script regulary place it in the directory that exists in your PATH, like below.
+If you want to use this script regulary, place it in the directory that exists in your PATH, like below.
 
 ```bash
 sudo mv bitwarden2keychain /usr/local/bin
