@@ -1,0 +1,214 @@
+#!/bin/bash
+
+trap "bw login --check > /dev/null 2>&1 && bw logout > /dev/null 2>&1" HUP INT QUIT TERM EXIT
+export TOP_PID=$$
+
+log::usageMessage () {
+    printf "usage: $0 [-l <Bitwarden login>]\n\n"
+    printf "  -l <Bitwarden login>\n"
+    printf "  -m <Bitwarden 2FA method>\n"
+    printf "  -u <Bitwarden server URL> If not provided - default url will be used.\n"
+    printf "  -h Print this message and exit.\n\n"
+    printf "%4s This application tries to login to Bitwarden server, get stored passwords\n"
+    printf "%4s and import them to MacOs Keychain as \"internet-password\".\n"
+    printf "%4s You can also specify your own Bitwarden server URL.\n"
+    printf "%4s Also, Bitwarden cli tool required for this script.\n"
+    printf "%4s You can find bitwarden cli installation instructions here:\n"
+    printf "%4s https://bitwarden.com/help/article/cli/#download--install\n\n"
+}
+
+log::errorMessage () {
+    echo "ERROR: $1"
+}
+
+log::successMessage () {
+    echo "SUCCESS: $1"
+}
+
+log::infoMessage () {
+    echo "INFO: $1"
+}
+
+log::blankLine () {
+    printf "\n"
+}
+
+
+verify::requirements () {
+    local requirements=(curl jq bw)
+    local missed_requirements=()
+    for app in ${requirements[*]} ; do
+        if [ "$(command -v $app > /dev/null ; echo $?)" -ne 0 ] ; then
+            missed_requirements+=($app)
+            log::errorMessage "$app doesnt found in PATH. Please install it first"
+            apps_missed=1
+        fi
+    done
+
+    if [ "$apps_missed" = 1 ] ; then
+        exit 72
+    fi
+}
+
+url::parse() {
+    local url=$1
+
+    proto="$(echo $url | awk -F\[:/\] '{print $1}')"
+    if [ $proto = "https" ] ; then
+        proto="htps"
+    fi
+    servername="$(echo $url | awk -F\[:/\] '{print $4}')"
+    path="$(echo $url | cut -d'/' -f4-)"
+
+    echo $proto $servername $path
+}
+
+url::verify () {
+    local bitwarden_url=$1
+    local bitwarden_response=$(curl \
+        --write-out %{http_code} \
+        --silent \
+        --output /dev/null \
+        $bitwarden_url )
+    
+    if [ "$bitwarden_response" != "200" ] ; then
+        log::errorMessage "Can't connect to $bitwarden_url. Please specify correct server url."
+        exit 69
+    fi
+}
+
+bitwarden::login () {
+    local bitwarden_user=$1
+    local bitwarden_method=$2
+    
+    # Chec if we already logged in
+    bw login --check > /dev/null 2>&1
+    if [ $? == 0 ] ; then
+        log::infoMessage "Logging out from Bitwarden because we need to obtain new session token."
+        bw logout
+    fi
+     
+    if [ ! -z "$bitwarden_method" ] ; then
+        bw_seesion_key=$(bw login --raw --method $bitwarden_method $bitwarden_user)
+    else
+        bw_seesion_key=$(bw login --raw $bitwarden_user)
+    fi
+
+    if [ -z $bw_seesion_key ] ; then
+        kill -s TERM $TOP_PID
+    else
+        echo $bw_seesion_key
+    fi
+}
+
+security::add-internet-password () {
+    local label="$1"
+    local proto="$2"
+    local servername="$3"
+    local path="$4"
+    local username="$5"
+    local password="$6"
+    local authtype="form"
+
+    local comment="Imported from Bitwarden"
+    local safari_app="/Applications/Safari.app"
+    local keychain_app="/System/Applications/Utilities/Keychain Access.app"
+    local security_app="/usr/bin/security"
+
+    if [ ! -z $path ] ; then
+        path_arg="-p $path"
+    fi
+
+    security add-internet-password \
+        -l "$label" \
+        -r "$proto" \
+        -s "$servername" \
+        -a "$username" \
+        -w "$password" \
+        -t "$authtype" \
+        -j "$comment" \
+        -T "$safari_app" \
+        -T "$keychain_app" \
+        -T "$security_app" \
+        $path_arg
+    
+    if [ $? -ne 0 ] ; then
+        log::errorMessage "Can't process object $label"
+    else
+        log::successMessage "Object $label processed successfully."
+    fi
+}
+
+init () {
+    local bitwarden_login=$1 
+    local bitwarden_method=$2 
+    local bitwarden_url=$3
+
+    verify::requirements
+    # Configure server if provided 
+    if [ "$bitwarden_url" != "null" ] ; then
+        url::verify "$bitwarden_url"
+        bw config server "$bitwarden_url"
+    fi
+    # Try to perform bitwarden login
+
+    log::infoMessage "Logging in to Bitwarden"
+    if [ "$bitwarden_method" != "null" ] ; then
+        export BW_SESSION="$(bitwarden::login $bitwarden_login $bitwarden_method)"
+    else
+        export BW_SESSION="$(bitwarden::login $bitwarden_login)"
+    fi
+    # Main processing
+    bw sync
+    local logins=$(bw list items | \
+        jq -r '.[] | select(.type==1) | [.name, .login.uris[0].uri, .login.username, .login.password] | @tsv')
+    while IFS=$'\t' read -r label uri username password; do
+        read -r proto servername path <<< $(url::parse $uri)
+        security::add-internet-password "$label" "$proto" "$servername" "$path" "$username" "$password"
+    done < <(printf '%s\n' "$logins")
+}
+
+# Verify that options was provided 
+if [ $# -lt 1 ] ; then
+    log::blankLine
+    log::errorMessage "No options found! You must provide at least Bitwarden login."
+    log::blankLine
+    log::usageMessage
+    exit 64
+fi
+
+# Read options before start processing
+while getopts ":l:m:u:h" OPT ; do
+    case "${OPT}" in
+        l)
+            bitwarden_login="${OPTARG}"
+        ;;
+        m)
+            bitwarden_method="${OPTARG}"
+        ;;
+        u)
+            bitwarden_url="${OPTARG}"
+        ;;
+        h) 
+            log::usageMessage
+            exit 0
+        ;;
+        ?)
+            log::errorMessage "No options provided, or wrong option."
+            log::blankLine
+            log::usageMessage
+            exit 64
+        ;;
+    esac
+done
+shift $((OPTIND-1))
+
+if [ -z $bitwarden_login ]; then
+    log::blankLine
+    log::errorMessage "You must provide Bitwarden login."
+    log::blankLine
+    log::usageMessage
+    exit 64
+fi
+
+init "${bitwarden_login}" "${bitwarden_method:-null}" "${bitwarden_url:-null}"
