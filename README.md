@@ -4,22 +4,22 @@ Shell script to add passwords from Bitwarden to MacOS Keychain
 ## Installation
 Just download this script and make it executable. Exemple you can find below.
 
-```shell
+```bash
 curl -L -o bitwarden2keychain https://github.com/aldemion/bitwarden2keychain/releases/download/1.0/bitwarden2keychain
 chmod +x bitwarden2keychain
 ```
 
 If you want to use this script regulary place it in the directory that exists in your PATH, like below.
 
-```shell
+```bash
 sudo mv bitwarden2keychain /usr/local/bin
 ```
 
 ## Help
 To display usage message call script with "-h" option.
 
-```shell
-usage: $0 [-l <Bitwarden login>]
+```bash
+usage: ./bitwarden2keychain [-l <Bitwarden login>]
   -l <Bitwarden login>
   -m <Bitwarden 2FA method>
   -u <Bitwarden server URL> If not provided - default url will be used.
