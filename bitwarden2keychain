@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 trap "bw login --check > /dev/null 2>&1 && bw logout > /dev/null 2>&1" HUP INT QUIT TERM EXIT
 export TOP_PID=$$
@@ -116,7 +116,7 @@ security::add-internet-password () {
     local security_app="/usr/bin/security"
 
     if [ ! -z $path ] ; then
-        path_arg="-p $path"
+        local path_arg="-p $path"
     fi
 
     security add-internet-password \
@@ -132,7 +132,10 @@ security::add-internet-password () {
         -T "$security_app" \
         $path_arg
     
-    if [ $? -ne 0 ] ; then
+    local execution_exitcode=$?
+    if [ $execution_exitcode == 45 ] ; then
+        log::errorMessage "The specified item: $label already exists in the keychain."
+    elif [ $execution_exitcode -ne 0 ] ; then
         log::errorMessage "Can't process object $label"
     else
         log::successMessage "Object $label processed successfully."
